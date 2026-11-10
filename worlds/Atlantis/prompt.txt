@@ -1,0 +1,376 @@
+Build a complete, self-contained, single-file HTML/Three.js 3rd-Person Explorable Merged-Voxel World recreating "ATLANTIS: BEFORE THE FALL" (1,200m x 1,200m high-density connected world, X: -600..+600, Z: -600..+600). Everything—terrain, connected marble bridges, aqueducts, temples, 5 Sun-Key Pilgrimage Altars, the floating Celestial Sanctum of Poseidon, 2,400 lush voxel trees/corals, 80 visible walking Atlantean citizens and leaping dolphins/stags, a working 3rd-person character controller with strict anti-underground camera collision, a pure 10-shot Cinematic Trailer preset, a World Tour preset, a password-protected Admin Fly Mode in Settings, and a procedural Web Audio soundtrack—must be generated 100% in code with ZERO external downloads and locked 60+ FPS.
+
+
+
+CRITICAL FAILURE PREVENTION RULES (READ BEFORE WRITING ANY CODE):
+
+1. NEVER LET THE CAMERA GO UNDERGROUND OR UNDER WATER: On EVERY SINGLE FRAME in ALL camera modes ('character', 'trailer', 'tour', 'orbit'), clamp camera.position.y >= Math.max(getSurfaceHeight(camera.position.x, camera.position.z), 0.0) + 2.5, and ray-march 5 points between the player and camera so hills/bridges never clip the camera or show the hollow underside of the world.
+
+2. NEVER ALLOW ORBITCONTROLS TO FIGHT THE 3RD-PERSON CHARACTER CAMERA: When cameraMode === 'character', set orbitControls.enabled = false! Drive the 3rd-person camera exclusively from the character's spring-arm rig.
+
+3. NEVER FORGET frustumCulled = false ON INSTANCEDMESH: On EVERY THREE.InstancedMesh (trees, flowers, corals, columns, citizens, dolphins, stags, birds), you MUST set instancedMesh.frustumCulled = false and instancedMesh.instanceMatrix.needsUpdate = true! (Otherwise Three.js culls the entire InstancedMesh when `(0,0,0)` leaves the view frustum, making flora and fauna disappear!)
+
+4. 100% CONNECTED BRIDGES, ROADS & ALTARS (ZERO FLOATING OR MISPLACED PARTS): You MUST use the unified getSurfaceHeight(x, z) mathematical function below for BOTH terrain generation AND placing every building, bridge, column, tree, NPC, and the player. Never hardcode arbitrary Y values for buildings or NPCs—always anchor them to const y = getSurfaceHeight(x, z) with a foundation plinth extending down to y - 6.0!
+
+5. SPAWN RIGHT IN THE ACTION SURROUNDED BY NPCS, TREES & MONUMENTS: Spawn the player at (X: 0, Z: 105) on the Grand South Marble Bridge facing North toward Poseidon's Acropolis (0, 0), with robed Atlantean citizens walking beside you on the bridge, dolphins leaping in the canal below, and lush cypress/blossom trees and golden braziers lining the causeway.
+
+
+
+================================================================================
+
+SECTION 1: CDN IMPORTMAP, RENDERER & 60-FPS ANGLE D3D11 CONTRACT
+
+================================================================================
+
+
+
+Place this exact importmap in &lt;head&gt;:
+
+&lt;script type=&quot;importmap&quot;&gt;
+
+{
+
+  &quot;imports&quot;: {
+
+    &quot;three&quot;: &quot;https://esm.sh/three@0.175.0&quot;,
+
+    &quot;three/addons/&quot;: &quot;https://esm.sh/three@0.175.0/examples/jsm/&quot;,
+
+    &quot;simplex-noise&quot;: &quot;https://esm.sh/simplex-noise@4.0.3&quot;,
+
+    &quot;gsap&quot;: &quot;https://esm.sh/gsap@3.12.7&quot;,
+
+    &quot;mp4-muxer&quot;: &quot;https://esm.sh/mp4-muxer@5.1.3&quot;
+
+  }
+
+}
+
+&lt;/script&gt;
+
+
+
+Renderer & Lighting Rules:
+
+- Initialize new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: false, stencil: false, depth: true }) with renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25)), ACESFilmicToneMapping (exposure: 1.1), SRGBColorSpace, and PCFSoftShadowMap.
+
+- Use MAX 1 DirectionalLight (2048x2048 shadow map) + 1 HemisphereLight (#a6e8ff sky, #d8a25e ground, intensity 0.75) + ZERO PointLights + ZERO SSAOPass.
+
+- Use a single UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.38, 0.35, 0.85) so HDR vertex/material colors (RGB > 1.8) on Orichalcum gold veins, Sun-Keys, braziers, and bioluminescent corals glow richly.
+
+- Add a solid deep-ocean abyss floor plane at y = -16.0m across the entire 2,400m x 2,400m scene so even at steep angles there is NEVER an empty void beneath the world.
+
+
+
+================================================================================
+
+SECTION 2: MANDATORY UNIFIED WORLD HEIGHT & CONNECTION KERNEL (getSurfaceHeight)
+
+================================================================================
+
+
+
+Use this exact unified coordinate architecture so the 3 Concentric Rings, the 4 Cardinal Bridges/Causeways, and the 5 Outer Altar Plateaus are 100% mathematically connected with zero gaps:
+
+
+
+- World Center (X: 0, Z: 0): Poseidon's Acropolis Island (Radius 0..78m, stepped marble terraces rising from +8m to +26m).
+
+- Inner Sea Canal (Radius 78..122m): Deep turquoise canal (seabed y = -8.0m, water surface y = 0.0m).
+
+- Middle Ring City Island (Radius 122..210m): Flat marble & garden ring at y = +7.5m (villas, colonnades, amphitheaters, cypress groves).
+
+- Middle Sea Canal (Radius 210..255m): Circular waterway (seabed y = -9.0m).
+
+- Outer Ring City & Hippodrome Belt (Radius 255..355m): Terraced city and park belt at y = +6.0m..+10.0m.
+
+- Outer Sea Canal (Radius 355..405m): Wide circular harbor canal (seabed y = -10.0m).
+
+- 4 Continuous Radial Causeways & Arched Bridges (100% Connected Walkways from R = 45m out to R = 500m):
+
+  Along the 4 cardinal axes—North (X = 0, Z < 0), South (X = 0, Z > 0), East (Z = 0, X > 0), West (Z = 0, X < 0)—and the South-West Diagonal (X = -Z * 0.707, X < 0, Z > 0):
+
+  Whenever a point (x, z) is within width <= 9.0m of a Causeway axis and sitting over a canal (78..122m, 210..255m, or 355..405m), getSurfaceHeight(x, z) MUST return the smooth arched bridge deck height (y = +8.5m to +11.5m), and the voxel builder MUST generate solid marble bridge piers underneath down to y = -10.0m plus decorative side parapets and golden speed-chevrons!
+
+- The 5 Connected Cardinal Altar Plateaus (at Radius = 470m, Directly at the End of Each Causeway!):
+
+  Every Causeway leads directly onto a flat 45m-radius monumental Altar Plateau so the player can walk or boat straight from the center of Atlantis to every single Altar on connected roads and bridges:
+
+  1. North Altar of Boreas (X: 0, Z: -470, Plateau y = +48.0m, surrounded by +95m snow-capped Atlas peaks and connected to the North Causeway by a grand stepped marble ramp + the 38m-tall Double-Tiered Northern Aqueduct along X = -22m).
+
+  2. West Altar of the Orichalcum Forge (X: -470, Z: 0, Plateau y = +28.0m inside a ringed +75m basalt volcanic crater with glowing red-gold molten Orichalcum channels, connected directly to the West Causeway).
+
+  3. East Altar of the Abyssal Tide (X: +470, Z: 0, Plateau y = +6.5m in a crystal turquoise lagoon ringed by 45m glowing cyan/magenta voxel coral arches, connected directly to the East Causeway viaduct).
+
+  4. South-West Altar of the Golden Dawn (X: -332, Z: +332, Plateau y = +24.0m atop 5 stepped travertine hot-spring waterfall pools, connected directly to the SW Diagonal Causeway).
+
+  5. South Altar of the Twin Harbor Colossi (X: 0, Z: +470, Plateau y = +12.0m harbor plaza flanked by two towering 95m Bronze-and-Marble Titan Colossus statues at X = -34 and X = +34 straddling the Southern Sea Entrance, connected directly to the South Causeway).
+
+
+
+================================================================================
+
+SECTION 3: HIGH-DENSITY VOXEL ARCHITECTURE, FLORA & VISIBLE NPCS (ZERO EMPTY SPACE)
+
+================================================================================
+
+
+
+Build rich, unmistakable multi-part voxel structures (using merged BufferGeometry chunks grouped by material or frustumCulled = false InstancedMesh batches so draw calls stay < 50):
+
+
+
+3.1 Mandatory Architectural Builder Functions (Every Structure Grounded via Plinth to y - 6.0m):
+
+- Poseidon's Great Temple at (0, 0, y = +26m): Stepped 3-tier white marble stylobate, 28 fluted Corinthian columns with golden capitals, triangular pediment, cobalt-and-gold roof, and a central 18m golden Poseidon statue holding a glowing cyan trident.
+
+- 120 Atlantean Courtyard Villas & 16 Rotunda Pavilions: Placed densely across the Middle Ring (R: 135..195m) and Outer Ring (R: 270..340m) on both sides of the 5 radial avenues. Build each villa from 6–10 voxel boxes: stone plinth, cream stucco walls, terracotta or royal-blue stepped hip roof, columned porch, and warm glowing windows.
+
+- Fluted Columns, Golden Braziers & Speed-Runes Along All 5 Causeways: Every 22m along both edges of all 5 Causeways and Bridges, place paired 8m fluted marble columns topped with glowing HDR golden fire braziers, plus glowing cyan-gold speed-boost chevrons inlaid into the center of the road.
+
+- The Great Northern Aqueduct (X = -22m, Z: -450..-125m): 16 connected double-tiered stone arches carrying a glowing turquoise waterfall channel from Mount Atlas into the city canals.
+
+- The 5 Sun-Key Altars: At each of the 5 Altar coordinates, build a 16m-radius circular marble sanctuary ringed by 8 columns, a glowing rune floor circle, and a rotating 4.0m HDR golden Sun-Key crystal floating at y + 4.5m.
+
+- The Grand Finale Unlock — "THE CELESTIAL SANCTUM OF POSEIDON" (X: 0, Z: 0, y = +88.0m):
+
+  * High above Poseidon's Temple sits the 90m-wide floating Celestial Sanctum: marble-and-gold sky-terraces, 4 cascading infinity waterfalls, 3 counter-rotating golden armillary rings, and a 38m glowing Crystal World-Tree with cyan-and-gold voxel foliage.
+
+  * When all 5 Sun-Keys are collected (or when unlocked via the Admin button in Settings), materialize a 48-step walkable Spiral Bridge of Solid Golden Light ascending smoothly from the Acropolis plaza (+26m) up to the Celestial Sanctum (+88m), and add its step heights into getSurfaceHeight(x, z) so the player can walk right up into the sky sanctuary!
+
+
+
+3.2 Mandatory Visible Flora (2,400+ Multi-Part Voxel Trees, Corals & Gardens — frustumCulled = false):
+
+Populate every island ring, hillside, and causeway edge with unmistakable, colorful multi-part voxel flora (trunk + 3–5 layered voxel foliage crowns):
+
+- 900 Tall Dark-Emerald Italian Cypress Spires & Silver-Green Olive Trees lining the Middle/Outer Rings and causeways.
+
+- 500 Weeping Golden- & Pink-Blossom Trees around the Acropolis, SW Hot-Spring Terraces, and Villa courtyards.
+
+- 500 Coastal Coconut Palms & Flowering Hibiscus Bushes along the canal banks and Harbor beach.
+
+- 500 Giant Bioluminescent Cyan, Magenta & Amber Voxel Coral Spirals and Lotus Pads in the Eastern Lagoon and canal edges.
+
+
+
+3.3 Mandatory Visible Moving NPCs & Fauna (85+ Heroic-Scale Animated Actors — frustumCulled = false):
+
+Make every NPC and animal large enough (2.2m–5.0m scale) and brightly colored to be immediately visible from spawn:
+
+- 32 Robed Atlantean Citizens, Scholars & Priests (white/cobalt/gold tunics, articulated arms/legs/heads): Place 12 walking directly along the South, North, East, and West Grand Bridges (including right in front of the player's spawn at X: 0, Z: 105!), and 20 strolling around the Acropolis Plaza and Middle Ring avenues. Animate their walking leg/arm swing every frame in renderAt(t).
+
+- 24 Leaping Voxel Dolphins & Giant Turquoise Manta Rays: Swimming along the Inner and Middle Canals directly visible from the bridges, executing smooth parabolic leaps out of the water (`y = Math.sin(t * 2.5 + phase) * 3.5`) with splash rings!
+
+- 18 White Stags (with golden antlers) & Fan-Tailed Peacocks: Grazing and walking in the Middle/Outer Ring gardens and SW Hot-Spring Terraces.
+
+- 30 White Doves & Seabirds: Soaring in circular flocks around the Acropolis Temple, the 4 Grand Bridges, and the Twin Harbor Colossi.
+
+
+
+================================================================================
+
+SECTION 4: BULLETPROOF 3RD-PERSON CHARACTER, ANTI-CLIP CAMERA & SKIFF KERNEL
+
+================================================================================
+
+
+
+Implement this exact, rock-solid character and camera architecture so movement feels like a polished game and the camera NEVER clips through the ground:
+
+
+
+4.1 Articulated Voxel Player Character (Spawn at X: 0, Z: 105, Yaw: Math.PI facing North):
+
+- Build a multi-part hierarchical Group: head (with golden circlet), torso (royal blue & gold tunic), leftArm, rightArm, leftLeg, rightLeg, and a flowing golden cape mesh.
+
+- Behind the character's shoulders, render up to 5 orbiting glowing Sun-Key crystals corresponding to collected keys.
+
+
+
+4.2 Direct WASD + Mouse-Look Controller (Zero OrbitControls Interference):
+
+- Track keysPressed = {} on window keydown/keyup for KeyW/ArrowUp, KeyS/ArrowDown, KeyA/ArrowLeft, KeyD/ArrowRight, ShiftLeft/ShiftRight, Space, KeyE, KeyV, KeyC, KeyH, Escape.
+
+- Mouse Look: Support BOTH pointer-lock (clicking the canvas locks pointer for effortless 360 mouse-look) AND click-drag mouse-look when pointer is not locked:
+
+  camYaw -= deltaMouseX * 0.0032;
+
+  camPitch = THREE.MathUtils.clamp(camPitch + deltaMouseY * 0.0032, 0.12, 1.15); // NEVER <= 0 so camera NEVER goes under player!
+
+- Movement Math (when cameraMode === 'character'):
+
+  orbitControls.enabled = false; // CRITICAL: prevent OrbitControls from fighting the character camera!
+
+  Compute camera-relative horizontal vectors:
+
+  const forwardX = -Math.sin(camYaw), forwardZ = -Math.cos(camYaw);
+
+  const rightX = Math.cos(camYaw), rightZ = -Math.sin(camYaw);
+
+  Let moveW = (W ? 1 : 0) - (S ? 1 : 0), moveR = (D ? 1 : 0) - (A ? 1 : 0).
+
+  If (moveW !== 0 || moveR !== 0), compute world velocity vector, rotate character smoothly toward movement angle, and swing arms/legs proportionally to speed.
+
+  * Normal Ground/Bridge Speed: 14.0 m/s walk, 24.0 m/s with Shift sprint (and 32.0 m/s when running on any of the 5 Radial Causeways/Bridges with golden footstep particles!).
+
+  * Smooth Vertical Ground Clamping (Never Gets Stuck on Voxel Steps):
+
+    const surfaceY = getSurfaceHeight(player.x, player.z);
+
+    const minFloorY = Math.max(surfaceY, -0.4); // -0.4 = surface swimming height in canals/sea
+
+    Smoothly step player.y onto minFloorY (plus jump velocity parabola when Space is pressed) so the player can walk seamlessly across bridges, up temple stairs, across the Spiral Light Bridge, or swim across canals!
+
+
+
+4.3 Mandatory Anti-Clip 3rd-Person Spring-Arm Camera (Never Goes Underground):
+
+Every frame in 'character' mode, compute the camera position using multi-sample terrain clearance:
+
+  const camDist = window.__WORLD_STATE__.inBoat ? 16.0 : 10.5;
+
+  const targetX = player.x + Math.sin(camYaw) * Math.cos(camPitch) * camDist;
+
+  const targetZ = player.z + Math.cos(camYaw) * Math.cos(camPitch) * camDist;
+
+  let targetY = player.y + 2.6 + Math.sin(camPitch) * camDist;
+
+  // Sample 5 points along the ray from player to camera and push targetY ABOVE any terrain/bridge/water:
+
+  for (let i = 1; i <= 5; i++) {
+
+    const f = i / 5;
+
+    const sx = THREE.MathUtils.lerp(player.x, targetX, f);
+
+    const sz = THREE.MathUtils.lerp(player.z, targetZ, f);
+
+    const groundAtRay = Math.max(getSurfaceHeight(sx, sz), 0.0) + 2.2;
+
+    if (targetY < groundAtRay) targetY = groundAtRay;
+
+  }
+
+  camera.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.25);
+
+  camera.lookAt(player.x, player.y + 2.0, player.z);
+
+
+
+4.4 Driveable Atlantean Canal Skiffs ([E] Near Any of 8 Canal Docks):
+
+- Place 8 ornate golden-prow voxel skiffs in the Inner, Middle, and Outer Canals (including one docked right beside the South Bridge spawn at X: 14, Z: 98!).
+
+- Pressing [E] within 9m boards/exits the skiff (speed 34 m/s across water with animated V-wake ripples).
+
+
+
+================================================================================
+
+SECTION 5: PILGRIMAGE QUEST, MINIMAL UI & SETTINGS ADMIN PASSWORD FLY MODE
+
+================================================================================
+
+
+
+5.1 The 5 Sun-Key Pilgrimage & Automatic Altar Detection:
+
+- When the player walks within 10m of any uncollected Altar (or presses [E]), automatically attune that Altar's Sun-Key:
+
+  * Trigger a triumphant Lydian bell-and-horn chord in Web Audio.
+
+  * Ignite a permanent HDR golden-cyan energy beam connecting that Altar's spire to the top of Poseidon's Acropolis (0, 0).
+
+  * Light up the corresponding gem in the top-left Medallion HUD and add an orbiting Sun-Key crystal behind the player.
+
+  * When all 5 keys are collected (keysCount === 5), automatically materialize the 48-step Spiral Bridge of Golden Light at (0, 0) and unlock the floating Celestial Sanctum (+88m).
+
+
+
+5.2 Ultra-Minimal Game UI (Zero Clutter):
+
+- Top-Left: A sleek, translucent 5-Gem Orichalcum Medallion showing collected Sun-Keys (0/5 to 5/5) + a clean 1-line compass guide pointing toward the nearest uncollected Altar (and a subtle keyboard hint "WASD Move | Shift Sprint | Mouse Look | Esc Settings").
+
+- Bottom-Center: Contextual action pill shown ONLY when near a skiff or altar.
+
+- Top-Right: Two small icon buttons: "[H] Hide UI" and "[⚙] Settings (Esc)".
+
+
+
+5.3 Settings Modal ([Esc] or [⚙]) with Admin Password Fly Access:
+
+- Contains:
+
+  1. Camera Mode Preset Buttons:
+
+     * "3rd-Person Character (Play)"
+
+     * "World Tour (60s Continuous Scenic Orbit)"
+
+     * "Cinematic Trailer (48s 10-Shot Director Cut — Zero Letterbox/UI Clutter)"
+
+     * "Free Orbit Camera" (with orbitControls.maxPolarAngle = Math.PI * 0.46 so Orbit camera can NEVER dip underground!)
+
+  2. Time-of-Day Slider (Dawn 0.26, Golden Noon 0.50, Sunset 0.74, Bioluminescent Night 0.90) & Audio Toggle.
+
+  3. Admin Access Password Input ("Enter Admin Password:"):
+
+     * Accepting "atlantis" or "poseidon" (case-insensitive, with hint label "Admin code: atlantis") immediately unlocks:
+
+       - "Admin Fly / Noclip Mode [ON / OFF]" toggle (and hotkey [V]): lets the character fly freely in 3D at 65 m/s (Space = Up, C = Down, Shift = 120 m/s fast fly) while still keeping camera above y = -5m.
+
+       - "Instant Unlock All 5 Keys & Open Sky Sanctum" button.
+
+       - 7 Instant Teleport Buttons: [Spawn Bridge], [Central Acropolis], [Celestial Sanctum (+88m)], [North Atlas Altar], [West Forge Altar], [East Coral Altar], [SW Hot-Springs Altar], [South Twin Colossi].
+
+  4. MP4 Video Export Studio (1920x1080 / 1280x720, 60 / 30 FPS, Include Music [ON/OFF], Render & Download MP4).
+
+
+
+================================================================================
+
+SECTION 6: PURE 10-SHOT CINEMATIC TRAILER & WORLD TOUR PRESETS (NO CLIPPING)
+
+================================================================================
+
+
+
+In both 'trailer' (48s, 10 shots x 4.8s) and 'tour' (60s continuous loop), drive the camera via window.renderAt(t) with ZERO letterbox bars and ZERO text overlays, and ALWAYS enforce camera.position.y = Math.max(camera.position.y, Math.max(getSurfaceHeight(camera.position.x, camera.position.z), 0.0) + 4.0) so no shot ever clips terrain:
+
+- Shot 1 (0.0–4.8s): Water-skimming glide between the 95m Twin Harbor Colossi at (0, 12, 540) -> (0, 18, 410) looking North at (0, 35, 0).
+
+- Shot 2 (4.8–9.6s): Tracking along the Grand South Marble Bridge (22, 16, 160) -> (18, 22, 65) as Atlantean citizens walk past and dolphins leap in the Inner Canal below.
+
+- Shot 3 (9.6–14.4s): Rising crane along the 38m Double-Tiered Northern Aqueduct (-45, 32, -260) -> (-30, 68, -420) looking at the snow-capped Mount Atlas Observatory Altar (0, 58, -470).
+
+- Shot 4 (14.4–19.2s): Sweeping push into the Western Volcanic Orichalcum Forge (-380, 42, -55) -> (-435, 38, -25) looking at glowing molten red-gold Orichalcum rivers at (-470, 32, 0).
+
+- Shot 5 (19.2–24.0s): Low glide over the Eastern Bioluminescent Coral Lagoon (+390, 14, +50) -> (+440, 16, +20) looking at (+470, 12, 0) surrounded by 45m glowing coral arches and swimming manta rays.
+
+- Shot 6 (24.0–28.8s): Serene dolly over the 5 steaming turquoise travertine waterfall pools and white stags at the SW Hot-Spring Gardens (-260, 28, +260) -> (-305, 34, +305) looking at (-332, 28, +332).
+
+- Shot 7 (28.8–33.6s): Sunset orbital sweep around Poseidon's Great Temple on the Central Acropolis (radius 95m, y = +44m) as all 5 cardinal energy beams ignite and converge overhead.
+
+- Shot 8 (33.6–38.4s): Ascending tracking shot climbing beside the glowing Spiral Bridge of Golden Light from (0, 38, 68) to (0, 96, 52) looking at (0, 95, 0).
+
+- Shot 9 (38.4–43.2s): 180-degree interior orbit of the floating Celestial Sanctum of Poseidon (+98m, radius 42m) around the glowing Crystal World-Tree, rotating golden armillary rings, and infinity waterfalls.
+
+- Shot 10 (43.2–48.0s): High-altitude zenith pullback (0, 140, 180) -> (0, 280, 560) looking at (0, 25, 0), showcasing the entire connected Ring-City of Atlantis, its bridges, aqueduct, and 5 glowing altar beams.
+
+
+
+================================================================================
+
+SECTION 7: PROCEDURAL WEB AUDIO SCORE, MP4 EXPORTER & SELF-AUDIT
+
+================================================================================
+
+
+
+- Web Audio API Synthesizer (renderAtlantisScore): D-Dorian plucked Greek Lyre arpeggios, warm French horn brass swells every 4.8s, celestial choir pad, footstep taps, canal waves, and Lydian bell fanfares when attuning Altars.
+
+- Synchronous WebCodecs H.264 + OfflineAudioContext AAC MP4 Exporter: Calls window.renderAt(f / fps), gl.finish(), and immediately ctx.drawImage(renderer.domElement, 0, 0, W, H) in the same tick.
+
+- Automated Self-Audit (window.runSelfAudit() at t = 1.0s): Verifies drawCalls < 55, 0 PointLights, 0 SSAOPass, frustumCulled === false on all InstancedMeshes, > 2,000 flora instances, > 80 active NPC/fauna instances, and zero underground camera positions across all 10 trailer shots.
+
